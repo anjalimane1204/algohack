@@ -19,52 +19,105 @@ def make_document(path: Path, label: str, lines: list[str]):
     img.save(path)
 
 make_document(
-    OUT_DIR / 'complete_id_proof.png',
-    'ID Proof',
+    OUT_DIR / 'identity_proof_complete.png',
+    'Identity Proof',
     [
         'Name: Aisha Sharma',
         'DOB: 05/11/2001',
         'Address: 25 Lake View, Bengaluru',
-        'Phone: 9876543210',
+        'Aadhaar Number: 1234 5678 9012',
     ],
 )
 
 make_document(
-    OUT_DIR / 'complete_address_proof.png',
+    OUT_DIR / 'student_id_complete.png',
+    'Student ID',
+    [
+        'Student ID: 2024-CS-077',
+        'Name: Aisha Sharma',
+        'College: NIT Trichy',
+        'Course: Computer Science',
+    ],
+)
+
+make_document(
+    OUT_DIR / 'marksheet_complete.png',
+    'Marksheet',
+    [
+        'Name: Aisha Sharma',
+        'Institution: NIT Trichy',
+        'Course: Computer Science',
+        'Percentage: 92%',
+        'Academic Year: 2026',
+    ],
+)
+
+make_document(
+    OUT_DIR / 'income_certificate_complete.png',
+    'Income Certificate',
+    [
+        'Name: Aisha Sharma',
+        'Annual Family Income: ₹1,20,000',
+        'Issued by: District Welfare Office',
+    ],
+)
+
+make_document(
+    OUT_DIR / 'address_proof_complete.png',
     'Address Proof',
     [
         'Address: 25 Lake View, Bengaluru',
         'Resident: Aisha Sharma',
-        'Document Type: Utility Bill',
+        'State: Karnataka',
     ],
 )
 
 make_document(
-    OUT_DIR / 'complete_photo.png',
-    'Photograph',
+    OUT_DIR / 'bank_proof_complete.png',
+    'Bank Proof',
     [
-        'Applicant: Aisha Sharma',
-        'Photo ID: 7742',
-        'Verified 2026',
+        'Name: Aisha Sharma',
+        'Bank: HDFC Bank',
+        'IFSC: HDFC0001234',
     ],
 )
 
 make_document(
-    OUT_DIR / 'mismatch_id_proof.png',
-    'ID Proof',
+    OUT_DIR / 'income_certificate_missing_demo.png',
+    'Income Certificate',
     [
-        'Name: Aisha K. Sharma',
-        'DOB: 05/11/2001',
-        'Address: 25 Lake View, Bengaluru',
+        'This sample is intentionally missing the income certificate text.',
+        'Used to demo missing-document handling.',
     ],
 )
 
 make_document(
-    OUT_DIR / 'missing_document_placeholder.png',
-    'Missing Document Demo',
+    OUT_DIR / 'mismatch_marksheet.png',
+    'Marksheet',
     [
-        'This is a placeholder to simulate missing files.',
-        'Upload a valid ID or address proof from the app.',
+        'Name: Aisha K Sharma',
+        'Institution: NIT Trichy',
+        'Course: Computer Science',
+        'Percentage: 92%',
+    ],
+)
+
+make_document(
+    OUT_DIR / 'unreadable_doc.png',
+    'Unreadable Document',
+    [
+        '??',
+        '???',
+        'No readable text detected',
+    ],
+)
+
+make_document(
+    OUT_DIR / 'unknown_document.png',
+    'Random Document',
+    [
+        'This is not a valid scheme document',
+        'No institution or income details found',
     ],
 )
 
