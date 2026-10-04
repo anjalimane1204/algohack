@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Python cache anywhere
+**/__pycache__/
+
+# React
+node_modules/
+dist/
+
+# Environment variables
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
