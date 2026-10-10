@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -11,15 +12,25 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
-from rapidocr_onnxruntime import RapidOCR
-
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "data" / "applications.db"
-UPLOAD_DIR = BASE_DIR / "uploaded_documents"
-DB_PATH.parent.mkdir(exist_ok=True)
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Vercel Functions have a read-only filesystem except for /tmp (ephemeral per instance).
+STORAGE_DIR = Path("/tmp/scholarverify") if os.environ.get("VERCEL") else BASE_DIR
+DB_PATH = STORAGE_DIR / "data" / "applications.db"
+UPLOAD_DIR = STORAGE_DIR / "uploaded_documents"
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-OCR_ENGINE = RapidOCR()
+_ocr_engine = None
+
+
+def get_ocr_engine():
+    # Loaded lazily so the API can boot quickly on cold starts.
+    global _ocr_engine
+    if _ocr_engine is None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _ocr_engine = RapidOCR()
+    return _ocr_engine
 
 DOCUMENT_DEFINITIONS = {
     "identity_proof": {
@@ -213,7 +224,7 @@ def extract_text_from_file(file_path: Path) -> str:
         if text.strip():
             return text
     try:
-        result, _ = OCR_ENGINE(str(file_path))
+        result, _ = get_ocr_engine()(str(file_path))
         if result:
             lines = []
             for item in result:
