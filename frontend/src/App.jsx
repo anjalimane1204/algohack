@@ -190,16 +190,6 @@ const emptyForm = {
   route: '',
 }
 
-const processingPipeline = [
-  'Application Received',
-  'Documents Processing',
-  'Identifying Documents',
-  'Extracting Information',
-  'Validating Documents',
-  'Checking Consistency',
-  'Final Result',
-]
-
 function App() {
   const [applicationType, setApplicationType] = useState('scholarship')
   const [form, setForm] = useState(emptyForm)
@@ -208,7 +198,7 @@ function App() {
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [processingStep, setProcessingStep] = useState(0)
+  const [uploadError, setUploadError] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -241,53 +231,52 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!loading) return undefined
-    const interval = setInterval(() => {
-      setProcessingStep((current) => (current + 1) % processingPipeline.length)
-    }, 700)
-    return () => clearInterval(interval)
-  }, [loading])
-
-  useEffect(() => {
-    setForm({ ...emptyForm, ...demoCases[`${applicationType}_complete`]?.form })
+    setForm({ ...emptyForm })
     setFiles({})
     setResult(null)
     setError('')
-    setProcessingStep(0)
+    setUploadError('')
   }, [applicationType])
-
-  const loadDemoCase = (caseKey) => {
-    const demo = demoCases[caseKey]
-    if (!demo) return
-
-    setApplicationType(demo.applicationType)
-    setForm({ ...emptyForm, ...demo.form })
-    setFiles({})
-    setResult(null)
-    setError('')
-    setProcessingStep(0)
-
-    const fileInputs = document.querySelectorAll('input[type="file"]')
-    fileInputs.forEach((input) => {
-      input.value = ''
-    })
-  }
 
   const handleFieldChange = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
+  const setSelectedFile = (key, file) => {
+    if (!file) return
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    if (!['png', 'jpg', 'jpeg', 'pdf'].includes(extension)) {
+      setUploadError('Choose a PDF, PNG, JPG, or JPEG document.')
+      return
+    }
+    setUploadError('')
+    setFiles((prev) => ({ ...prev, [key]: file }))
+    setResult(null)
+  }
+
   const handleFileChange = (event) => {
-    const { name, files: selectedFiles } = event.target
-    const file = selectedFiles && selectedFiles[0] ? selectedFiles[0] : null
-    setFiles((prev) => ({ ...prev, [name]: file }))
+    setSelectedFile(event.target.name, event.target.files?.[0])
+  }
+
+  const handleFileDrop = (event, key) => {
+    event.preventDefault()
+    setSelectedFile(key, event.dataTransfer.files?.[0])
+  }
+
+  const removeFile = (key) => {
+    setFiles((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    setResult(null)
   }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
     setLoading(true)
     setError('')
-    setProcessingStep(0)
+    setUploadError('')
 
     const formData = new FormData()
     formData.append('application_type', applicationType)
@@ -450,20 +439,41 @@ function App() {
   }
 
   const getUploadStatus = (key) => {
-    if (!result || !result.documents) return 'Waiting'
-    const item = result.documents.find((entry) => entry.key_name === key || entry.expected_type === key)
-    if (!item) return 'Waiting'
-    if (item.status === 'VALID') return 'Validated ✓'
-    if (item.status === 'WRONG DOCUMENT') return 'Wrong document'
-    if (item.status === 'INCOMPLETE') return 'Incomplete'
-    return 'Manual review'
+    if (!result) return files[key] ? 'Ready to verify' : 'Waiting'
+    const documents = result.detected_documents || result.documents || []
+    const item = documents.find((entry) => entry.key_name === key || entry.expected_type === key)
+    if (!item) {
+      if ((result.missing_documents || []).includes(key)) return 'Missing'
+      return files[key] ? 'Ready to verify' : 'Not processed'
+    }
+    const status = String(item.status || '').toUpperCase().replace(/[ -]+/g, '_')
+    if (status === 'VALID') return 'Validated'
+    if (status === 'WRONG_DOCUMENT') return 'Wrong document'
+    if (status === 'INCOMPLETE') return 'Incomplete'
+    if (status === 'MANUAL_REVIEW') return 'Manual review'
+    return status.replace(/_/g, ' ') || 'Not processed'
   }
 
   const getDetectedType = (key) => {
-    if (!result || !result.documents) return 'Not processed'
-    const item = result.documents.find((entry) => entry.key_name === key || entry.expected_type === key)
+    if (!result) return 'Not processed'
+    const documents = result.detected_documents || result.documents || []
+    const item = documents.find((entry) => entry.key_name === key || entry.expected_type === key)
     if (!item) return 'Not processed'
-    return `${item.detected_type || 'Unknown Document'} · ${(item.confidence || 0).toFixed(0)}%`
+    const detectedType = item.detected_document_type || item.detected_type || 'Unknown Document'
+    const confidence = Number(item.confidence || 0)
+    const confidencePercent = confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence)
+    return `${detectedType.replace(/_/g, ' ')} · ${confidencePercent}%`
+  }
+
+  const formatDocumentLabel = (value) => String(value || 'Document')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+
+  const getStatusDescription = (status) => {
+    const normalized = String(status || '').toUpperCase()
+    if (normalized === 'COMPLETE') return 'All required checks passed. This application is ready for review.'
+    if (normalized === 'MANUAL_REVIEW') return 'A document needs a person to inspect it before a decision can be made.'
+    return 'One or more details need correction before this application can proceed.'
   }
 
   const visibleHistory = history.filter((entry) => {
@@ -525,6 +535,7 @@ function App() {
               key={appType.key}
               className={`type-card ${applicationType === appType.key ? 'selected' : ''}`}
               onClick={() => setApplicationType(appType.key)}
+              aria-pressed={applicationType === appType.key}
             >
               <span className="type-icon">{appType.icon}</span>
               <span className="type-title">{appType.title}</span>
@@ -540,6 +551,7 @@ function App() {
             <div className="panel-header">
               <h2>{config.title}</h2>
             </div>
+            <p className="helper-copy">Upload real supporting documents. A readable document can satisfy more than one proof requirement when it matches the applicant details.</p>
 
             <div className="field-grid">
               {config.fields.map((field) => (
@@ -577,34 +589,36 @@ function App() {
                       <span className={required ? 'required-tag' : 'optional-tag'}>{required ? 'Required' : 'Optional'}</span>
                     </div>
 
-                    <label className="drop-zone">
+                        <label
+                          className={`drop-zone ${files[key] ? 'has-file' : ''}`}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => handleFileDrop(event, key)}
+                        >
                       <input type="file" name={key} onChange={handleFileChange} accept=".png,.jpg,.jpeg,.pdf" />
-                      <span>Drag &amp; drop or choose file</span>
+                          <span>{files[key] ? 'Drop to replace or choose another file' : 'Drag &amp; drop or choose file'}</span>
                     </label>
 
                     <div className="upload-meta">
-                      <div><strong>Selected:</strong> {files[key] ? files[key].name : 'No file'}</div>
+                          <div className="selected-file">
+                            <span><strong>Selected:</strong> {files[key] ? files[key].name : 'No file'}</span>
+                            {files[key] && <button type="button" className="remove-file" onClick={() => removeFile(key)} aria-label={`Remove ${label}`}>Remove</button>}
+                          </div>
                       <div><strong>Detected:</strong> {getDetectedType(key)}</div>
-                      <div><strong>Status:</strong> <span className={`status-chip ${getUploadStatus(key).includes('Validated') ? 'ok' : getUploadStatus(key).includes('Wrong') ? 'warn' : getUploadStatus(key).includes('Manual') ? 'manual' : 'idle'}`}>{getUploadStatus(key)}</span></div>
+                          <div><strong>Status:</strong> <span className={`status-chip ${['Validated', 'Ready to verify'].includes(getUploadStatus(key)) ? 'ok' : ['Wrong document', 'Missing'].includes(getUploadStatus(key)) ? 'warn' : getUploadStatus(key).includes('Manual') ? 'manual' : 'idle'}`}>{getUploadStatus(key)}</span></div>
                     </div>
                   </div>
                 ))}
               </div>
+                  {uploadError && <div className="error-box" role="alert">{uploadError}</div>}
             </div>
 
             {loading && (
-              <div className="progress-panel">
-                <div className="pipeline">
-                  {processingPipeline.map((step, index) => (
-                    <span key={step} className={index === processingStep ? 'pipeline-step active' : 'pipeline-step'}>
-                      {step}
-                    </span>
-                  ))}
+                  <div className="progress-panel" role="status" aria-live="polite">
+                    <div className="progress-heading"><span className="progress-spinner" aria-hidden="true" /> Verifying application</div>
+                    <p>Documents are being uploaded, read, and checked for consistency. This may take a moment.</p>
+                    <div className="progress-line indeterminate" role="progressbar" aria-label="Verification in progress">
+                      <span />
                 </div>
-                <div className="progress-line">
-                  <span style={{ width: `${((processingStep + 1) / processingPipeline.length) * 100}%` }} />
-                </div>
-                <p>Processing... {processingPipeline[processingStep]}</p>
               </div>
             )}
 
@@ -623,6 +637,7 @@ function App() {
                 <h2>Verification Result</h2>
                 <span className={statusClass(result.overall_status || result.status)}>{result.overall_status || result.status}</span>
               </div>
+              <p className="status-explainer">{getStatusDescription(result.overall_status || result.status)}</p>
 
               <div className="result-summary">
                 <div>
@@ -689,7 +704,7 @@ function App() {
                 <h3>Missing Documents</h3>
                 <ul>
                   {(result.missing_documents || []).length ? (
-                    (result.missing_documents || []).map((item) => <li key={item}>• {item}</li>)
+                    (result.missing_documents || []).map((item) => <li key={item}>• {formatDocumentLabel(item)}</li>)
                   ) : (
                     <li>None</li>
                   )}
@@ -699,19 +714,31 @@ function App() {
               <div className="result-block">
                 <h3>Document Checks</h3>
                 <ul>
-                  {(result.documents || []).map((document) => (
-                    <li key={`${document.expected_type}-${document.detected_type}`}>
-                      <strong>{document.expected_type}</strong> → {document.detected_type} ({document.confidence || 0}%)
-                    </li>
-                  ))}
+                  {(result.detected_documents || result.documents || []).length ? (
+                    (result.detected_documents || result.documents || []).map((document, index) => {
+                      const expected = document.key_name || document.expected_type
+                      const detected = document.detected_document_type || document.detected_type || 'unknown'
+                      const confidence = Number(document.confidence || 0)
+                      const confidencePercent = confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence)
+                      return (
+                        <li key={`${expected}-${index}`}>
+                          <strong>{formatDocumentLabel(expected)}</strong> expected; detected {formatDocumentLabel(detected)} ({confidencePercent}% confidence).
+                          {document.status && <span className={`document-check-status ${String(document.status).toUpperCase() === 'VALID' ? 'valid' : 'needs-attention'}`}>{String(document.status).replace(/_/g, ' ')}</span>}
+                          {document.reason && <small className="document-check-reason">{document.reason}</small>}
+                        </li>
+                      )
+                    })
+                  ) : (
+                    <li>No documents were processed.</li>
+                  )}
                 </ul>
               </div>
 
               <div className="result-block">
                 <h3>Consistency Checks</h3>
                 <ul>
-                  {(result.consistency_checks || []).length ? (
-                    (result.consistency_checks || []).map((item, index) => <li key={index}>• {item}</li>)
+                  {(result.issues || []).filter((item) => /(applicant name|date of birth|institution|course|annual income|academic score|address).*?(does not match|differs)/i.test(item)).length ? (
+                    (result.issues || []).filter((item) => /(applicant name|date of birth|institution|course|annual income|academic score|address).*?(does not match|differs)/i.test(item)).map((item, index) => <li key={index}>{item}</li>)
                   ) : (
                     <li>No critical mismatches detected.</li>
                   )}

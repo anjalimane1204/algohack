@@ -89,6 +89,8 @@ APPLICATION_TYPE_CONFIG = {
             "course",
             "academic_year",
             "scholarship_type",
+            "annual_income",
+            "academic_score",
         ],
     },
     "transport_pass": {
@@ -288,10 +290,11 @@ def extract_phone_from_text(text: str) -> str:
 
 
 def extract_address_from_text(text: str) -> str:
-    pattern = r"address\s*[:\-]?\s*([A-Za-z0-9 ,./#-]+)"
-    match = re.search(pattern, text, flags=re.IGNORECASE)
-    if match:
-        return match.group(1).strip()[:200]
+    pattern = r"^\s*address(?:\s+proof)?(?:\s*[:\-]\s*|\s+)(.+)$"
+    for line in text.splitlines():
+        match = re.search(pattern, line, flags=re.IGNORECASE)
+        if match and match.group(1).strip().lower() not in {"proof", "proof of address", "domicile proof"}:
+            return match.group(1).strip()[:200]
     return ""
 
 
@@ -309,7 +312,7 @@ def extract_institution_from_text(text: str) -> str:
 
 
 def extract_course_from_text(text: str) -> str:
-    for keyword in ["btech", "b.tech", "computer science", "mechanical", "civil", "mba", "mtech", "bca", "mca", "bsc", "msc"]:
+    for keyword in ["computer science", "mechanical", "electronics", "civil", "btech", "b.tech", "mba", "mtech", "bca", "mca", "bsc", "msc"]:
         if keyword.lower() in text.lower():
             return keyword.title()
     return ""
@@ -441,6 +444,18 @@ def compare_field(app_value: str | None, doc_value: str | None, field_name: str)
     if normalize_name(app_value) in normalize_name(doc_value) or normalize_name(doc_value) in normalize_name(app_value):
         return None
     return f"{field_name} does not match the uploaded document."
+
+
+def is_acceptable_document_match(doc_type: str, required_doc_key: str) -> bool:
+    if not doc_type or doc_type == "unknown":
+        return False
+    if required_doc_key == doc_type:
+        return True
+    if doc_type in {"identity_proof", "address_proof", "domicile_certificate"} and required_doc_key in {"identity_proof", "address_proof", "domicile_certificate"}:
+        return True
+    if doc_type in {"student_id", "bonafide_certificate"} and required_doc_key in {"student_id", "bonafide_certificate"}:
+        return True
+    return False
 
 
 def init_db() -> None:
@@ -698,6 +713,7 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
     documents_received: list[str] = []
     missing_documents: list[str] = []
     extracted_information: dict[str, Any] = {}
+    fulfilled_required_documents: set[str] = set()
 
     for field in required_fields:
         value = str(form_data.get(field, "") or "").strip()
@@ -705,14 +721,6 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
             validation_results.append(f"Missing required field: {field}")
         else:
             extracted_information[field] = value
-
-    for doc_key in required_documents:
-        if uploaded_docs.get(doc_key):
-            documents_received.append(doc_key)
-        else:
-            missing_documents.append(doc_key)
-            issues.append(f"{doc_key.replace('_', ' ').title()} is missing.")
-            recommended_actions.append(f"Upload the missing {doc_key.replace('_', ' ')} document.")
 
     for doc_key, file_path in uploaded_docs.items():
         if not file_path or not file_path.exists():
@@ -739,11 +747,23 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
         confidence = detection["confidence"]
         extracted_fields = extract_document_fields(doc_type, text)
 
+        acceptable_required_keys = [
+            required_key for required_key in required_documents if is_acceptable_document_match(doc_type, required_key)
+        ]
+        if not acceptable_required_keys and doc_key in required_documents:
+            acceptable_required_keys = [doc_key]
+
+        if acceptable_required_keys:
+            fulfilled_required_documents.update(acceptable_required_keys)
+
         if doc_key in required_documents and (doc_type == "unknown" or confidence < 0.55):
-            status = "MANUAL_REVIEW"
-            issues.append(f"Document type could not be confidently identified for {doc_key.replace('_', ' ')}.")
-            recommended_actions.append("Upload a clearer document or a valid supporting document.")
-        elif doc_key in required_documents and doc_type not in ({doc_key, "bonafide_certificate"} if doc_key == "student_id" else {doc_key, "unknown"}):
+            if not acceptable_required_keys:
+                status = "MANUAL_REVIEW"
+                issues.append(f"Document type could not be confidently identified for {doc_key.replace('_', ' ')}.")
+                recommended_actions.append("Upload a clearer document or a valid supporting document.")
+            else:
+                status = "VALID"
+        elif doc_key in required_documents and not acceptable_required_keys:
             status = "WRONG_DOCUMENT"
             issues.append(f"Uploaded file for {doc_key.replace('_', ' ')} matches {doc_type.replace('_', ' ')} instead of the expected document type.")
             recommended_actions.append(f"Upload the correct {doc_key.replace('_', ' ')} document.")
@@ -761,6 +781,14 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
         }
         extracted_information.update({f"{doc_key}_extracted": extracted_fields})
         detected_documents.append(doc_entry)
+
+    for doc_key in required_documents:
+        if doc_key in fulfilled_required_documents:
+            documents_received.append(doc_key)
+        else:
+            missing_documents.append(doc_key)
+            issues.append(f"{doc_key.replace('_', ' ').title()} is missing.")
+            recommended_actions.append(f"Upload the missing {doc_key.replace('_', ' ')} document.")
 
     applicant_name = str(form_data.get("applicant_name", "") or "")
     if applicant_name:
@@ -782,7 +810,9 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
     institution = str(form_data.get("institution", "") or "")
     for doc in detected_documents:
         institution_value = doc.get("extracted_fields", {}).get("institution")
-        if institution and institution_value and normalize_text(institution) not in normalize_text(institution_value):
+        normalized_institution = normalize_text(institution)
+        normalized_document_institution = normalize_text(institution_value)
+        if institution and institution_value and normalized_institution not in normalized_document_institution and normalized_document_institution not in normalized_institution:
             issues.append("Institution does not match the uploaded academic document.")
             recommended_actions.append("Update the institution field or upload the correct student certificate.")
             break
@@ -790,9 +820,21 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
     course = str(form_data.get("course", "") or "")
     for doc in detected_documents:
         course_value = doc.get("extracted_fields", {}).get("course")
-        if course and course_value and normalize_text(course) not in normalize_text(course_value):
+        normalized_course = normalize_text(course)
+        normalized_document_course = normalize_text(course_value)
+        if course and course_value and normalized_course not in normalized_document_course and normalized_document_course not in normalized_course:
             issues.append("Course does not match the uploaded document.")
             recommended_actions.append("Verify the course value and upload the matching certificate.")
+            break
+
+    address = str(form_data.get("address", "") or "")
+    for doc in detected_documents:
+        address_value = doc.get("extracted_fields", {}).get("address")
+        normalized_address = normalize_text(address)
+        normalized_document_address = normalize_text(address_value)
+        if address and address_value and normalized_address not in normalized_document_address and normalized_document_address not in normalized_address:
+            issues.append(f"Address does not match the uploaded {doc['key_name'].replace('_', ' ')}.")
+            recommended_actions.append("Verify the address and upload a matching identity or residence document.")
             break
 
     annual_income = str(form_data.get("annual_income", "") or "")
@@ -801,6 +843,14 @@ def process_application(form_data: dict[str, Any], uploaded_docs: dict[str, Path
         if annual_income and income_value and safe_float(annual_income) and safe_float(income_value) and safe_float(annual_income) != safe_float(income_value):
             issues.append("Annual income differs from the income certificate.")
             recommended_actions.append("Recheck the annual income and upload a valid income certificate.")
+            break
+
+    academic_score = str(form_data.get("academic_score", "") or "")
+    for doc in detected_documents:
+        score_value = doc.get("extracted_fields", {}).get("percentage")
+        if academic_score and score_value and safe_float(academic_score) is not None and safe_float(score_value) is not None and safe_float(academic_score) != safe_float(score_value):
+            issues.append("Academic score differs from the uploaded marksheet.")
+            recommended_actions.append("Verify the academic score and upload a matching marksheet.")
             break
 
     if not issues and not validation_results and not missing_documents:
